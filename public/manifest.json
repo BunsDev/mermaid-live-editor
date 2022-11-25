@@ -1,0 +1,8 @@
+{
+  "name": "Mermaid",
+  "short_name": "Mermaid",
+  "lang": "en",
+  "description": "Live editor",
+  "scope": "/",
+  "start_url": "/"
+}
