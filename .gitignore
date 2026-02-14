@@ -1,14 +1,17 @@
-node_modules/
-coverage/
-.cache/
-build/
-yarn-error.log
-.npmrc
 .DS_Store
+.cache/
+.env.local
+.npmrc
 /.svelte-kit
 /build
+/coverage
+/docs
 /functions
+/node_modules
 /snapshots.js
-/cypress/downloads
-/cypress/videos
-/cypress/screenshots
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

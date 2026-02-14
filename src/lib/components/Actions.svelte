@@ -1,80 +1,66 @@
 <script lang="ts">
+  import Card from '$/components/Card/Card.svelte';
+  import CopyButton from '$/components/CopyButton.svelte';
+  import CopyInput from '$/components/CopyInput.svelte';
+  import ExternalLinkWrapper from '$/components/ExternalLinkWrapper.svelte';
+  import { Button } from '$/components/ui/button';
+  import { Input } from '$/components/ui/input';
+  import { Separator } from '$/components/ui/separator';
+  import * as ToggleGroup from '$/components/ui/toggle-group';
+  import { TID } from '$/constants';
+  import { getDomain } from '$/util/util';
   import { browser } from '$app/environment';
-  import Card from '$lib/components/Card/Card.svelte';
-  import { env } from '$lib/util/env';
-  import { pakoSerde } from '$lib/util/serde';
-  import { stateStore } from '$lib/util/state';
+  import { waitForRender } from '$lib/util/autoSync';
+  import { inputStateStore, stateStore, urlsStore } from '$lib/util/state';
   import { logEvent } from '$lib/util/stats';
+  import { version as FAVersion } from '@fortawesome/fontawesome-free/package.json';
+  import dayjs from 'dayjs';
   import { toBase64 } from 'js-base64';
-  import moment from 'moment';
-  const { krokiRendererUrl, rendererUrl } = env;
+  import DownloadIcon from '~icons/material-symbols/download';
+  import ExternalLinkIcon from '~icons/material-symbols/open-in-new-rounded';
+  import WidthIcon from '~icons/material-symbols/width-rounded';
+
+  const FONT_AWESOME_URL = `https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${FAVersion}/css/all.min.css`;
 
   type Exporter = (context: CanvasRenderingContext2D, image: HTMLImageElement) => () => void;
 
-  const getFileName = (ext: string) =>
-    `mermaid-diagram-${moment().format('YYYY-MM-DD-HHmmss')}.${ext}`;
+  const getFileName = (extension: string) =>
+    `mermaid-diagram-${dayjs().format('YYYY-MM-DD-HHmmss')}.${extension}`;
+
+  const getSvgElement = () => {
+    const svgElement = document.querySelector('#container svg')?.cloneNode(true) as HTMLElement;
+    svgElement.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+    return svgElement;
+  };
 
   const getBase64SVG = (svg?: HTMLElement, width?: number, height?: number): string => {
-    height && svg?.setAttribute('height', `${height}px`);
-    width && svg?.setAttribute('width', `${width}px`); // Workaround https://stackoverflow.com/questions/28690643/firefox-error-rendering-an-svg-image-to-html5-canvas-with-drawimage
-    if (!svg) {
-      svg = getSvgEl();
+    if (svg) {
+      // Prevents the SVG size of the interface from being changed
+      svg = svg.cloneNode(true) as HTMLElement;
     }
+    if (height) {
+      svg?.setAttribute('height', `${height}px`);
+    }
+    if (width) {
+      svg?.setAttribute('width', `${width}px`);
+    }
+    // Workaround https://stackoverflow.com/questions/28690643/firefox-error-rendering-an-svg-image-to-html5-canvas-with-drawimage
+
+    if (!svg) {
+      svg = getSvgElement();
+    }
+
+    svg.style.backgroundColor = window
+      .getComputedStyle(document.body)
+      .getPropertyValue('--background');
+
     const svgString = svg.outerHTML
       .replaceAll('<br>', '<br/>')
       .replaceAll(/<img([^>]*)>/g, (m, g: string) => `<img ${g} />`);
-    return toBase64(svgString);
-  };
 
-  const exportImage = (event: Event, exporter: Exporter) => {
-    const canvas: HTMLCanvasElement = document.createElement('canvas');
-    const svg: HTMLElement | null = document.querySelector('#container svg');
-    if (!svg) {
-      throw new Error('svg not found');
-    }
-    const box: DOMRect = svg.getBoundingClientRect();
-    canvas.width = box.width;
-    canvas.height = box.height;
-    if (imagemodeselected === 'width') {
-      const ratio = box.height / box.width;
-      canvas.width = userimagesize;
-      canvas.height = userimagesize * ratio;
-    } else if (imagemodeselected === 'height') {
-      const ratio = box.width / box.height;
-      canvas.width = userimagesize * ratio;
-      canvas.height = userimagesize;
-    }
-
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('context not found');
-    }
-    context.fillStyle = 'white';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const image = new Image();
-    image.onload = exporter(context, image);
-    image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
-
-    event.stopPropagation();
-    event.preventDefault();
-  };
-
-  const getSvgEl = () => {
-    const svgEl: HTMLElement = document
-      .querySelector('#container svg')!
-      .cloneNode(true) as HTMLElement;
-    svgEl.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-    const fontAwesomeCdnUrl = Array.from(document.head.getElementsByTagName('link'))
-      .map((l) => l.href)
-      .find((h) => h.includes('font-awesome'));
-    if (fontAwesomeCdnUrl == null) {
-      return svgEl;
-    }
-    const styleEl = document.createElement('style');
-    styleEl.innerText = `@import url("${fontAwesomeCdnUrl}");'`;
-    svgEl.prepend(styleEl);
-    return svgEl;
+    return toBase64(`<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet href="${FONT_AWESOME_URL}" type="text/css"?>
+${svgString}`);
   };
 
   const simulateDownload = (download: string, href: string): void => {
@@ -84,6 +70,58 @@
     a.click();
     a.remove();
   };
+
+  const exportImage = async (event: Event, exporter: Exporter) => {
+    $inputStateStore.panZoom = false;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await waitForRender();
+    const canvas = document.createElement('canvas');
+    const svg = document.querySelector<HTMLElement>('#container svg');
+    if (!svg) {
+      throw new Error('svg not found');
+    }
+
+    const box = svg.getBoundingClientRect();
+
+    if (imageSizeMode === 'width') {
+      const ratio = box.height / box.width;
+      canvas.width = imageSize;
+      canvas.height = imageSize * ratio;
+    } else if (imageSizeMode === 'height') {
+      const ratio = box.width / box.height;
+      canvas.width = imageSize * ratio;
+      canvas.height = imageSize;
+    } else {
+      const multiplier = 2;
+      canvas.width = box.width * multiplier;
+      canvas.height = box.height * multiplier;
+    }
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('context not found');
+    }
+
+    context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    const image = new Image();
+    image.addEventListener('load', () => {
+      exporter(context, image)();
+      $inputStateStore.panZoom = true;
+    });
+    image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
+    // Fallback to set panZoom to true after 2 seconds
+    // This is a workaround for the case when the image is not loaded
+    setTimeout(() => {
+      if (!$inputStateStore.panZoom) {
+        $inputStateStore.panZoom = true;
+      }
+    }, 2000);
+    event.stopPropagation();
+    event.preventDefault();
+  };
+
   const downloadImage: Exporter = (context, image) => {
     return () => {
       const { canvas } = context;
@@ -96,7 +134,7 @@
   };
 
   const isClipboardAvailable = (): boolean => {
-    return Object.prototype.hasOwnProperty.call(window, 'ClipboardItem') as boolean;
+    return Object.prototype.hasOwnProperty.call(window, 'ClipboardItem');
   };
 
   const clipboardCopy: Exporter = (context, image) => {
@@ -120,13 +158,13 @@
     };
   };
 
-  const onCopyClipboard = (event: Event) => {
-    exportImage(event, clipboardCopy);
+  const onCopyClipboard = async (event: Event) => {
+    await exportImage(event, clipboardCopy);
     logEvent('copyClipboard');
   };
 
-  const onDownloadPNG = (event: Event) => {
-    exportImage(event, downloadImage);
+  const onDownloadPNG = async (event: Event) => {
+    await exportImage(event, downloadImage);
     logEvent('download', {
       type: 'png'
     });
@@ -139,124 +177,99 @@
     });
   };
 
-  const onCopyMarkdown = () => {
-    (document.getElementById('markdown') as HTMLInputElement).select();
-    document.execCommand('Copy');
-    logEvent('copyMarkdown');
-  };
-
-  let gistURL = '';
+  let gistURL = $state('');
   stateStore.subscribe(({ loader }) => {
     if (loader?.type === 'gist') {
-      // @ts-expect-error Gist will have url
       gistURL = loader.config.url;
     }
   });
 
   const loadGist = () => {
     if (!gistURL) {
-      alert('Please enter a Gist URL first');
+      return alert('Please enter a Gist URL first');
     }
     window.location.href = `${window.location.pathname}?gist=${gistURL}`;
     logEvent('loadGist');
   };
 
-  let iUrl: string;
-  let svgUrl: string;
-  let krokiUrl: string;
-  let mdCode: string;
-  let imagemodeselected = 'auto';
-  let userimagesize = 1080;
+  let imageSizeMode: 'auto' | 'width' | 'height' = $state('auto');
 
-  let isNetlify = false;
-  if (browser && ['mermaid.live', 'netlify'].some((path) => window.location.host.includes(path))) {
-    isNetlify = true;
-  }
-  stateStore.subscribe(({ code, serialized }) => {
-    iUrl = `${rendererUrl}/img/${serialized}?type=png`;
-    svgUrl = `${rendererUrl}/svg/${serialized}`;
-    krokiUrl = `${krokiRendererUrl}/mermaid/svg/${pakoSerde.serialize(code)}`;
-    mdCode = `[![](${iUrl})](${window.location.protocol}//${window.location.host}${window.location.pathname}#${serialized})`;
+  $effect(() => {
+    if (!imageSizeMode) {
+      imageSizeMode = 'auto';
+    }
   });
+
+  let imageSize = $state(1080);
+
+  const isNetlify = browser && window.location.host.includes('netlify');
 </script>
 
-<Card title="Actions" isOpen={true}>
-  <div class="flex flex-wrap gap-2 m-2">
-    {#if isClipboardAvailable()}
-      <button class="action-btn w-full" on:click={onCopyClipboard}
-        ><i class="far fa-copy mr-2" /> Copy Image to clipboard
-      </button>
-    {/if}
-    <button id="downloadPNG" class="action-btn flex-grow" on:click={onDownloadPNG}>
-      <i class="fas fa-download mr-2" /> PNG
-    </button>
-    <button id="downloadSVG" class="action-btn flex-grow" on:click={onDownloadSVG}>
-      <i class="fas fa-download mr-2" /> SVG
-    </button>
-    <a target="_blank" rel="noreferrer" class="flex-grow" href={iUrl}>
-      <button class="action-btn w-full">
-        <i class="fas fa-external-link-alt mr-2" /> PNG
-      </button>
-    </a>
-    <a target="_blank" rel="noreferrer" class="flex-grow" href={svgUrl}>
-      <button class="action-btn w-full">
-        <i class="fas fa-external-link-alt mr-2" /> SVG
-      </button>
-    </a>
-    <a target="_blank" rel="noreferrer" class="flex-grow" href={krokiUrl}>
-      <button class="action-btn w-full">
-        <i class="fas fa-external-link-alt mr-2" /> Kroki
-      </button>
-    </a>
+{#snippet dualActionButton(text: string, download: (event: Event) => unknown, url?: string)}
+  <div class="flex flex-grow gap-0.5">
+    <Button
+      class={['flex-grow', url && 'rounded-r-none']}
+      onclick={download}
+      data-testid="download-{text}">
+      <DownloadIcon />
+      {text}
+    </Button>
+    <ExternalLinkWrapper domain={getDomain(url)} isVisible={!!url}>
+      <Button class="rounded-l-none" href={url} target="_blank" rel="noreferrer noopener">
+        <ExternalLinkIcon />
+      </Button>
+    </ExternalLinkWrapper>
+  </div>
+{/snippet}
 
-    <div class="flex gap-2 items-center">
+<Card title="Actions" isStackable icon={{ component: DownloadIcon, class: 'rotate-180' }}>
+  <div class="flex min-w-fit flex-col gap-2 p-2">
+    <div class="flex w-full items-center gap-2 py-2 whitespace-nowrap">
       PNG size
-      <label for="autosize">
-        <input type="radio" value="auto" id="autosize" bind:group={imagemodeselected} /> Auto
-      </label>
-
-      <label for="width">
-        <input type="radio" value="width" id="width" bind:group={imagemodeselected} /> Width
-      </label>
-
-      <label for="height">
-        <input type="radio" value="height" id="height" bind:group={imagemodeselected} /> Height
-      </label>
-
-      {#if imagemodeselected !== 'auto'}
-        <input
-          id="height"
-          class="input"
-          type="number"
-          min="3"
-          max="10000"
-          bind:value={userimagesize} />
+      <ToggleGroup.Root type="single" variant="outline" bind:value={imageSizeMode}>
+        <ToggleGroup.Item value="auto">Auto</ToggleGroup.Item>
+        <ToggleGroup.Item value="width">Width</ToggleGroup.Item>
+        <ToggleGroup.Item value="height">Height</ToggleGroup.Item>
+      </ToggleGroup.Root>
+      {#if imageSizeMode !== 'auto'}
+        <WidthIcon
+          class={['size-6 shrink-0 transition-all', imageSizeMode === 'width' && 'rotate-90']} />
       {/if}
+      <Input
+        type="number"
+        min="3"
+        max="10000"
+        disabled={imageSizeMode === 'auto'}
+        bind:value={imageSize} />
     </div>
-
-    <div class="w-full flex gap-2 items-center">
-      <input class="input" id="markdown" type="text" value={mdCode} on:click={onCopyMarkdown} />
-      <label for="markdown">
-        <button class="btn btn-primary btn-md flex-auto" on:click={onCopyMarkdown}>
-          Copy Markdown
-        </button>
-      </label>
+    <div class="flex gap-2">
+      {@render dualActionButton('PNG', onDownloadPNG, $urlsStore.png)}
+      {@render dualActionButton('SVG', onDownloadSVG, $urlsStore.svg)}
+      <ExternalLinkWrapper domain={getDomain($urlsStore.kroki)} isVisible={!!$urlsStore.kroki}>
+        <a target="_blank" rel="noreferrer" class="flex-grow" href={$urlsStore.kroki}>
+          <Button class="action-btn flex w-full items-center gap-2">
+            <ExternalLinkIcon /> Kroki
+          </Button>
+        </a>
+      </ExternalLinkWrapper>
     </div>
-
-    <div class="w-full flex gap-2 items-center">
-      <input
-        class="input"
-        id="gist"
-        type="text"
-        bind:value={gistURL}
-        placeholder="Enter Gist URL" />
-      <label for="gist">
-        <button class="btn btn-primary btn-md flex-auto" on:click={loadGist}> Load Gist </button>
-      </label>
+    <Separator />
+    {#if isClipboardAvailable()}
+      <CopyButton onclick={onCopyClipboard} label="Copy Image" />
+    {/if}
+    <ExternalLinkWrapper
+      labelPrefix="Thumbnail generated by"
+      domain={getDomain($urlsStore.png)}
+      isVisible={!!$urlsStore.mdCode}>
+      <CopyInput value={$urlsStore.mdCode} label="Copy Markdown" testID={TID.copyMarkdown} />
+    </ExternalLinkWrapper>
+    <div class="flex w-full items-center gap-2">
+      <Input type="url" bind:value={gistURL} placeholder="Enter Gist URL" />
+      <Button onclick={loadGist}>Load Gist</Button>
     </div>
     {#if isNetlify}
-      <div class="w-full flex items-center justify-center">
-        <a class="link underline text-gray-500 text-sm" href="https://netlify.com">
+      <div class="flex w-full items-center justify-center">
+        <a class="link text-sm text-gray-500 underline" href="https://netlify.com">
           This site is powered by Netlify
         </a>
       </div>

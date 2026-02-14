@@ -5,47 +5,51 @@ on:
     branches:
       - master
       - develop
+  merge_group:
 
 jobs:
-  cypress-run:
+  playwright:
+    name: 'Playwright Tests'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # run 3 copies of the current job in parallel
-        containers: [1, 2, 3]
+    container:
+      image: mcr.microsoft.com/playwright:v1.52.0-jammy
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
-        id: yarn-and-build-cache
+      - uses: actions/cache@v4
+        id: pnpm-and-build-cache
         with:
           path: |
-            ~/.cache/Cypress
             build
             node_modules
-          key: ${{ runner.os }}-node_modules-build-${{ hashFiles('**/yarn.lock') }}
+          key: ${{ runner.os }}-node_modules-build-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-node_modules-build-
 
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 16
-          cache: 'yarn'
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
 
-      # Install NPM dependencies, cache them correctly
-      # and run all Cypress tests
-      - name: Cypress run
-        uses: cypress-io/github-action@v3
+      - uses: actions/setup-node@v4
         with:
-          build: yarn build
-          start: yarn preview
-          wait-on: 'http://localhost:3000'
-          record: true
-          headless: true
-          parallel: true
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run Playwright tests
+        run: pnpm test:e2e
         env:
-          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
-          CYPRESS_CI: true
+          CI: true
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7

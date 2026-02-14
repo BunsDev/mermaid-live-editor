@@ -1,10 +1,6 @@
-/**
- * Can be made globally available by placing this
- * inside `global.d.ts` and removing `export` keyword
- */
-export interface Locals {
-  userid: string;
-}
+import type { Component } from 'svelte';
+import type { HTMLInputTypeAttribute } from 'svelte/elements';
+import 'unplugin-icons/types/svelte';
 
 export interface MarkerData {
   severity: number;
@@ -23,16 +19,19 @@ export interface TabEvents {
 export interface Tab {
   id: string;
   title: string;
-  icon: string;
+  icon: Component;
 }
 
 export interface State {
   code: string;
   mermaid: string;
   updateDiagram: boolean;
-  autoSync: boolean;
-  editorMode?: EditorMode;
+  rough: boolean;
+  // All new options must be optional, as users would have old states saved
+  renderCount?: number;
   panZoom?: boolean;
+  grid?: boolean;
+  editorMode?: EditorMode;
   pan?: { x: number; y: number };
   zoom?: number;
   loader?: LoaderConfig;
@@ -40,7 +39,8 @@ export interface State {
 
 export interface ValidatedState extends State {
   editorMode: EditorMode;
-  error: unknown;
+  diagramType?: string;
+  error?: Error;
   errorMarkers: MarkerData[];
   serialized: string;
 }
@@ -57,10 +57,15 @@ export interface FileLoaderConfig {
   codeURL: string;
   configURL?: string;
 }
-export interface LoaderConfig {
-  type: 'gist' | 'files';
-  config: GistLoaderConfig | FileLoaderConfig;
-}
+export type LoaderConfig =
+  | {
+      type: 'gist';
+      config: GistLoaderConfig;
+    }
+  | {
+      type: 'files';
+      config: FileLoaderConfig;
+    };
 export type HistoryType = 'auto' | 'manual' | 'loader';
 export type HistoryEntry = { id: string; state: State; time: number; url?: string } & (
   | {
@@ -73,7 +78,7 @@ export type HistoryEntry = { id: string; state: State; time: number; url?: strin
     }
 );
 
-export type DocConfig = Record<
+export type DocumentationConfig = Record<
   string,
   {
     code: string;
@@ -93,4 +98,10 @@ export interface ErrorHash {
     first_column: number;
     last_column: number;
   };
+}
+
+export type InputType = Exclude<HTMLInputTypeAttribute, 'file'>;
+
+export interface EditorProps {
+  onUpdate: (text: string) => void;
 }

@@ -1,11 +1,18 @@
 <script lang="ts">
-  import '../app.postcss';
+  import { Toaster } from '$/components/ui/sonner/index.js';
+  import { loadingStateStore } from '$/util/loading';
+  import { toggleDarkTheme } from '$/util/state';
+  import { initHandler } from '$/util/util';
   import { base } from '$app/paths';
-  import { onMount } from 'svelte';
-  import { loadingStateStore } from '$lib/util/loading';
-  import { setTheme, themeStore } from '$lib/util/theme';
-  import { toggleDarkTheme } from '$lib/util/state';
-  import { initHandler } from '$lib/util/util';
+  import { mode, ModeWatcher } from 'mode-watcher';
+  import { onMount, type Snippet } from 'svelte';
+  import '../app.css';
+
+  interface Props {
+    children: Snippet;
+  }
+
+  let { children }: Props = $props();
 
   // This can be removed once https://github.com/sveltejs/kit/issues/1612 is fixed.
   // Then move it into src and vite will bundle it automatically.
@@ -13,11 +20,10 @@
     window.addEventListener('hashchange', () => {
       void initHandler();
     });
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
-        .register(`${base}/service-worker.js`, {
-          scope: `${base}/`
-        })
+        .register(`${base}/service-worker.js`, { scope: `${base}/` })
         .then(function (registration) {
           console.log('Registration successful, scope is:', registration.scope);
         })
@@ -25,31 +31,25 @@
           console.log('Service worker registration failed, error:', error);
         });
     }
+  });
 
-    const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-
-    if ($themeStore.theme === undefined) {
-      setTheme(isDarkMode ? 'dark' : 'light');
-    }
-
-    themeStore.subscribe(({ theme, isDark }) => {
-      if (theme) {
-        document.getElementsByTagName('html')[0].setAttribute('data-theme', theme);
-        toggleDarkTheme(isDark);
-      }
-    });
+  $effect(() => {
+    toggleDarkTheme($mode === 'dark');
   });
 </script>
 
-<main class="h-screen text-primary-content">
-  <slot />
+<ModeWatcher />
+<Toaster />
+
+<main class="h-[100dvh]">
+  {@render children()}
 </main>
 
 {#if $loadingStateStore.loading}
   <div
-    class="w-screen h-screen z-50 absolute left-0 top-0 bg-gray-600 opacity-50 flex align-middle justify-center">
-    <div class="text-indigo-100 text-4xl font-bold my-auto">
-      <div class="loader mx-auto" />
+    class="absolute top-0 left-0 z-50 flex h-screen w-screen justify-center bg-gray-600 align-middle opacity-50">
+    <div class="my-auto text-4xl font-bold text-indigo-100">
+      <div class="loader mx-auto"></div>
       <div>{$loadingStateStore.message}</div>
     </div>
   </div>

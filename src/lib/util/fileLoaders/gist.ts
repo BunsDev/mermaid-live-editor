@@ -1,10 +1,8 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { addHistoryEntry } from '$lib/components/History/history';
 import type { State } from '$lib/types';
 import { defaultState } from '$lib/util/state';
-import { addHistoryEntry } from '$lib/components/History/history';
+import { fetchJSON, fetchText } from '$lib/util/util';
 
 const codeFileName = 'code.mmd';
 const configFileName = 'config.json';
@@ -21,7 +19,7 @@ const isValidGist = (files: any): boolean => {
 
 const getFileContent = async (file: GithubFile): Promise<string> => {
   if (file.truncated) {
-    return await (await fetch(file.raw_url)).text();
+    return await fetchText(file.raw_url);
   }
   return file.content;
 };
@@ -48,10 +46,10 @@ const getGistData = async (gistURL: string): Promise<GistData> => {
   }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_, __, gistID, revisionID] = path.split('/');
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-  const { html_url, files, history }: GistResponse = await (
-    await fetch(`https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`)
-  ).json();
+
+  const { html_url, files, history }: GistResponse = await fetchJSON(
+    `https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`
+  );
   if (isValidGist(files)) {
     const code = await getFileContent(files[codeFileName]);
     let config = '{}';
@@ -60,12 +58,12 @@ const getGistData = async (gistURL: string): Promise<GistData> => {
     }
     const currentItem = history[0];
     return {
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-      url: `${html_url}/${currentItem.version}`,
+      author: currentItem.user.login,
       code,
       config,
-      author: currentItem.user.login,
       time: new Date(currentItem.committed_at).getTime(),
+
+      url: `${html_url}/${currentItem.version}`,
       version: currentItem.version.slice(-7)
     };
   } else {
@@ -78,13 +76,15 @@ const getStateFromGist = (gist: GistData, gistURL: string = gist.url): State => 
     ...defaultState,
     code: gist.code,
     loader: {
-      type: 'gist',
       config: {
         url: gistURL
-      }
+      },
+      type: 'gist'
     }
   };
-  gist.config && (state.mermaid = gist.config);
+  if (gist.config) {
+    state.mermaid = gist.config;
+  }
   return state;
 };
 
@@ -95,31 +95,35 @@ export const loadGistData = async (gistURL: string): Promise<State> => {
   }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_, __, gistID, revisionID] = path.split('/');
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-  const { history }: GistResponse = await (
-    await fetch(`https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`)
-  ).json();
+
+  const { history }: GistResponse = await fetchJSON(
+    `https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`
+  );
   const gistHistory: GistData[] = [];
   for (const entry of history) {
-    const data: GistData | undefined = await getGistData(entry.url).catch(() => undefined);
-    data && gistHistory.push(data);
+    try {
+      const data: GistData = await getGistData(entry.url);
+      gistHistory.push(data);
+    } catch (error) {
+      console.error(error);
+    }
   }
   if (gistHistory.length === 0) {
     throw new Error('Invalid gist provided');
   }
   gistHistory.reverse();
-  const entry = gistHistory.slice(-1).pop();
+  const entry = gistHistory.at(-1);
   if (!entry) {
     throw new Error('Invalid gist provided');
   }
   const state = getStateFromGist(entry, gistURL);
   for (const gist of gistHistory) {
     addHistoryEntry({
+      name: `${gist.author} v${gist.version}`,
       state: getStateFromGist(gist),
       time: gist.time,
       type: 'loader',
-      url: gist.url,
-      name: `${gist.author} v${gist.version}`
+      url: gist.url
     });
   }
   return state;

@@ -1,64 +1,76 @@
 import { browser } from '$app/environment';
-import type { AnalyticsInstance } from 'analytics';
-export let analytics: AnalyticsInstance | undefined;
+import type PlausibleInstance from 'plausible-tracker';
+import { env } from './env';
+
+export let plausible: ReturnType<typeof PlausibleInstance> | undefined;
 
 export const initAnalytics = async (): Promise<void> => {
-  if (browser && !analytics) {
-    try {
-      const [{ Analytics }, { default: plausible }] = await Promise.all([
-        import('analytics'),
-        import('analytics-plugin-plausible')
-      ]);
-      analytics = Analytics({
-        app: 'mermaid-live-editor',
-        plugins: [
-          plausible({
-            domain: 'mermaid.live',
-            hashMode: false,
-            trackLocalhost: false, // By default 'false'
-            apiHost: 'https://plausible.io'
-          })
-        ]
-      });
-    } catch (e) {
-      console.log(e);
-      console.info('Analytics blocked ;)');
-    }
+  if (!env.analyticsUrl || !browser || plausible) {
+    return;
   }
-};
 
-export const detectType = (text: string): string | undefined => {
-  const possibleDiagramTypes = [
-    'classDiagram',
-    'erDiagram',
-    'flowChart',
-    'gantt',
-    'gitGraph',
-    'graph',
-    'journey',
-    'pie',
-    'stateDiagram'
-  ];
-  const firstLine = text
-    .replace(/^\s*%%.*\n/g, '\n')
-    .trimStart()
-    .split(' ')[0]
-    .toLowerCase();
-  const detectedDiagram = possibleDiagramTypes.find((d) => firstLine.includes(d.toLowerCase()));
-  return detectedDiagram;
+  try {
+    const { default: Plausible } = await import('plausible-tracker');
+    plausible = Plausible({
+      // All tracked stats are public and available at https://p.mermaid.live/mermaid.live
+      apiHost: env.analyticsUrl,
+      domain: env.domain,
+      hashMode: false
+    });
+  } catch (error) {
+    console.log(error);
+    console.info('Analytics blocked ;)');
+  }
 };
 
 export const countLines = (code: string): number => {
   return (code.match(/\n/g)?.length ?? 0) + 1;
 };
 
-export const saveStatistics = (graph: string): void => {
-  const graphType = detectType(graph);
-  if (!graphType) {
+export const saveStatistics = ({
+  code,
+  renderTime,
+  isRough,
+  diagramType
+}: {
+  code: string;
+  renderTime: number;
+  isRough: boolean;
+  diagramType?: string;
+}): void => {
+  if (!diagramType) {
     return;
   }
-  const length = countLines(graph);
-  logEvent('render', { graphType, length });
+  const length = countLines(code);
+  const lengthBucket = getBucket(length);
+  const renderTimeMsBucket = getBucket(renderTime);
+  logEvent('render', { diagramType, isRough, lengthBucket, renderTimeMsBucket });
+};
+
+const getBucket = (length: number): string => {
+  const buckets = [
+    [10, '0-10'],
+    [25, '10-25'],
+    [50, '25-50'],
+    [100, '50-100'],
+    [200, '100-200'],
+    [500, '200-500'],
+    [700, '500-700'],
+    [1000, '700-1000'],
+    [1500, '1000-1500'],
+    [2500, '1500-2500'],
+    [4500, '2500-4500'],
+    [7000, '4500-7000'],
+    [10_000, '7000-10000']
+  ] as const;
+
+  for (const [threshold, label] of buckets) {
+    if (length < threshold) {
+      return label;
+    }
+  }
+
+  return '10000+';
 };
 
 const minutesToMilliSeconds = (minutes: number): number => {
@@ -67,30 +79,41 @@ const minutesToMilliSeconds = (minutes: number): number => {
 
 const defaultDelay = minutesToMilliSeconds(1);
 const delaysPerEvent = {
-  render: minutesToMilliSeconds(5),
-  panZoom: minutesToMilliSeconds(10),
+  bannerClick: defaultDelay,
   copyClipboard: defaultDelay,
-  download: defaultDelay,
   copyMarkdown: defaultDelay,
+  download: defaultDelay,
+  history: defaultDelay,
   loadGist: defaultDelay,
   loadSampleDiagram: defaultDelay,
-  renderDiagram: defaultDelay,
-  history: defaultDelay,
   migration: defaultDelay,
-  themeChange: defaultDelay
-};
+  mobileViewToggle: defaultDelay,
+  panZoom: minutesToMilliSeconds(10),
+  pwaInstalled: defaultDelay,
+  render: minutesToMilliSeconds(5),
+  renderDiagram: defaultDelay,
+  themeChange: defaultDelay,
+  version: defaultDelay
+} as const;
 export type AnalyticsEvent = keyof typeof delaysPerEvent;
 const timeouts: Map<string, number> = new Map<string, number>();
 // manual debounce to reduce the number of events sent to analytics
-export const logEvent = (name: AnalyticsEvent, data?: unknown): void => {
-  if (!analytics) {
+export const logEvent = (
+  name: AnalyticsEvent,
+  data?: Record<string, string | number | boolean>
+): void => {
+  if (!plausible) {
     return;
   }
-  const key = data ? JSON.stringify({ name, data }) : name;
-  if (!timeouts.has(key)) {
-    void analytics.track(name, data);
-  } else {
+  const key = data ? JSON.stringify({ data, name }) : name;
+  if (timeouts.has(key)) {
     clearTimeout(timeouts.get(key));
+  } else {
+    plausible.trackEvent(
+      name,
+      { props: data },
+      { url: window.location.origin + window.location.pathname }
+    );
   }
   timeouts.set(
     key,

@@ -1,8 +1,12 @@
 <script lang="ts">
-  import View from '$lib/components/View.svelte';
-  import { initHandler } from '$lib/util/util';
+  import View from '$/components/View.svelte';
+  import { initHandler } from '$/util/util';
   import { onMount } from 'svelte';
   onMount(initHandler);
 </script>
 
-<View />
+<svelte:head>
+  <meta name="robots" content="noindex" />
+</svelte:head>
+
+<View shouldShowGrid={false} />

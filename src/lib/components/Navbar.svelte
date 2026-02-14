@@ -1,82 +1,99 @@
-<script context="module" lang="ts">
+<script lang="ts" module>
+  import { logEvent, plausible } from '$lib/util/stats';
   import { version } from 'mermaid/package.json';
-  import { analytics } from '$lib/util/stats';
-  void analytics?.track('version', {
+
+  void logEvent('version', {
     mermaidVersion: version
   });
 </script>
 
 <script lang="ts">
-  import Theme from './Theme.svelte';
+  import MainMenu from '$/components/MainMenu.svelte';
+  import { Button } from '$/components/ui/button';
+  import { Separator } from '$/components/ui/separator';
+  import { dismissPromotion, getActivePromotion } from '$lib/util/promos/promo';
+  import type { ComponentProps, Snippet } from 'svelte';
+  import MermaidIcon from '~icons/custom/mermaid';
+  import CloseIcon from '~icons/material-symbols/close-rounded';
+  import GithubIcon from '~icons/mdi/github';
+  import DropdownNavMenu from './DropdownNavMenu.svelte';
 
-  interface Link {
-    title: string;
-    href: string;
-    icon?: string;
+  interface Props {
+    mobileToggle?: Snippet;
+    children: Snippet;
   }
-  const links: Link[] = [
+
+  let { children, mobileToggle }: Props = $props();
+
+  type Links = ComponentProps<typeof DropdownNavMenu>['links'];
+
+  const githubLinks: Links = [
+    { title: 'Mermaid JS', href: 'https://github.com/mermaid-js/mermaid' },
     {
-      title: 'Documentation',
-      href: 'https://mermaid-js.github.io/mermaid/#/n00b-gettingStarted'
+      title: 'Mermaid Live Editor',
+      href: 'https://github.com/mermaid-js/mermaid-live-editor'
     },
     {
-      title: 'Tutorial',
-      href: 'https://github.com/mermaid-js/mermaid/blob/develop/docs/Tutorials.md'
-    },
-    {
-      title: 'Mermaid',
-      href: 'https://github.com/mermaid-js/mermaid'
-    },
-    {
-      title: 'CLI',
+      title: 'Mermaid CLI',
       href: 'https://github.com/mermaid-js/mermaid-cli'
-    },
-    {
-      title: '',
-      href: 'https://github.com/mermaid-js/mermaid-live-editor',
-      icon: 'fab fa-github fa-lg'
     }
   ];
+
+  let activePromotion = $state(getActivePromotion());
+
+  const trackBannerClick = () => {
+    if (!plausible || !activePromotion) {
+      return;
+    }
+    logEvent('bannerClick', {
+      promotion: activePromotion.id
+    });
+  };
 </script>
 
-<div class="navbar shadow-lg bg-primary p-0">
-  <div class="flex-1 px-2 mx-2">
-    <span class="text-lg font-bold">
-      <a href="/">Mermaid<span class="text-xs font-thin">v{version}</span> Live Editor</a>
-    </span>
+{#if activePromotion}
+  <div class="top-bar z-10 flex h-fit w-full bg-primary">
+    <div
+      class="flex flex-grow"
+      role="button"
+      tabindex="0"
+      onclick={trackBannerClick}
+      onkeypress={trackBannerClick}>
+      <activePromotion.component {closeBanner} />
+    </div>
+    {#snippet closeBanner()}
+      <Button
+        title="Dismiss banner"
+        variant="ghost"
+        class="hover:bg-transparent hover:text-[#261A56]"
+        size="sm"
+        onclick={() => {
+          dismissPromotion(activePromotion?.id);
+          activePromotion = undefined;
+        }}>
+        <CloseIcon />
+      </Button>
+    {/snippet}
   </div>
-  <label for="menu-toggle" class="pointer-cursor lg:hidden block"
-    ><svg
-      class="fill-current "
-      xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
-      viewBox="0 0 20 20"
-      ><title>Menu</title><path d="M0 3h20v2H0V3zm0 6h20v2H0V9zm0 6h20v2H0v-2z" /></svg
-    ></label>
-  <input class="hidden" type="checkbox" id="menu-toggle" />
+{/if}
 
-  <Theme />
-  <div class="hidden lg:flex lg:items-center lg:w-auto w-full" id="menu">
-    <ul class="lg:flex items-center justify-between text-base pt-4 lg:pt-0">
-      {#each links as { title, href, icon }}
-        <li>
-          <a class="btn btn-ghost" target="_blank" rel="noreferrer" {href}>
-            {#if icon}
-              <i class={icon} />
-            {/if}
-            {title}</a>
-        </li>
-      {/each}
-    </ul>
+<nav class="z-50 flex p-4 sm:p-6">
+  <div class="flex flex-1 items-center gap-2">
+    <MainMenu />
+    <MermaidIcon class="size-6" />
+    <a href="/" class="whitespace-nowrap text-accent">
+      {#if !mobileToggle}
+        Mermaid
+      {/if}
+      Live Editor
+    </a>
   </div>
-</div>
-
-<style>
-  #menu-toggle:checked + #menu {
-    display: block;
-  }
-  .navbar {
-    z-index: 10000;
-  }
-</style>
+  <div
+    id="menu"
+    class="hidden flex-nowrap items-center justify-between gap-3 overflow-hidden md:flex">
+    <DropdownNavMenu icon={GithubIcon} links={githubLinks} />
+    <Separator orientation="vertical" />
+    {@render children()}
+  </div>
+  {@render mobileToggle?.()}
+</nav>
