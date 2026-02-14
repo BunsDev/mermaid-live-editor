@@ -1,33 +1,37 @@
-import { writable, get, type Readable, derived } from 'svelte/store';
-import { persist, localStorage } from './persist';
-import { saveStatistics, countLines } from './stats';
-import { serializeState, deserializeState } from './serde';
-import { cmdKey, errorDebug } from './util';
-import { parse } from './mermaid';
-
-import type { ErrorHash, MarkerData, State, ValidatedState } from '$lib/types';
+import { C } from '$/constants';
+import type { ErrorHash, MarkerData, State, ValidatedState } from '$/types';
+import { debounce } from 'lodash-es';
 import type { MermaidConfig } from 'mermaid';
+import { derived, get, writable, type Readable } from 'svelte/store';
+import { env } from './env';
+import {
+  extractErrorLineText,
+  findMostRelevantLineNumber,
+  replaceLineNumberInErrorMessage
+} from './errorHandling';
+import { parse } from './mermaid';
+import { localStorage, persist } from './persist';
+import { deserializeState, pakoSerde, serializeState } from './serde';
+import { errorDebug, formatJSON, MCBaseURL } from './util';
 
 export const defaultState: State = {
-  code: `graph TD
+  code: `flowchart TD
     A[Christmas] -->|Get money| B(Go shopping)
     B --> C{Let me think}
     C -->|One| D[Laptop]
     C -->|Two| E[iPhone]
     C -->|Three| F[fa:fa-car Car]
   `,
-  mermaid: JSON.stringify(
-    {
-      theme: 'default'
-    },
-    null,
-    2
-  ),
-  autoSync: true,
+  grid: true,
+  mermaid: formatJSON({
+    theme: 'default'
+  }),
+  panZoom: true,
+  rough: false,
   updateDiagram: true
 };
 
-const urlParseFailedState = `graph TD
+const urlParseFailedState = `flowchart TD
     A[Loading URL failed. We can try to figure out why.] -->|Decode JSON| B(Please check the console to see the JSON and error details.)
     B --> C{Is the JSON correct?}
     C -->|Yes| D(Please Click here to Raise an issue in github.<br/>Including the broken link in the issue <br/> will speed up the fix.)
@@ -45,48 +49,71 @@ export const currentState: ValidatedState = (() => {
   const state = get(inputStateStore);
   return {
     ...state,
-    serialized: serializeState(state),
-    errorMarkers: [],
+    editorMode: state.editorMode ?? 'code',
     error: undefined,
-    editorMode: state.editorMode ?? 'code'
+    errorMarkers: [],
+    serialized: serializeState(state)
   };
 })();
+
+let lastDiagramType = '';
 
 const processState = async (state: State) => {
   const processed: ValidatedState = {
     ...state,
-    serialized: '',
-    errorMarkers: [],
+    editorMode: state.editorMode ?? 'code',
     error: undefined,
-    editorMode: state.editorMode ?? 'code'
+    errorMarkers: [],
+    serialized: ''
   };
   // No changes should be done to fields part of `state`.
   try {
     processed.serialized = serializeState(state);
-    await parse(state.code);
+    const { diagramType } = await parse(state.code);
+    processed.diagramType = diagramType;
+    if (lastDiagramType === 'zenuml' && diagramType !== lastDiagramType) {
+      // Temp Hack to refresh page after displaying ZenUML.
+      setTimeout(() => window.location.reload(), 500);
+    }
+    lastDiagramType = diagramType;
     JSON.parse(state.mermaid);
-  } catch (e) {
-    processed.error = e;
+  } catch (error) {
+    processed.error = error as Error;
     errorDebug();
-    console.error(e);
-    if ('hash' in e) {
+    console.error(error);
+    if ('hash' in error) {
       try {
-        const {
-          loc: { first_line, last_line, first_column, last_column }
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        } = e.hash as ErrorHash;
+        let errorString = processed.error.toString();
+        const errorLineText = extractErrorLineText(errorString);
+        const realLineNumber = findMostRelevantLineNumber(errorLineText, state.code);
+
+        let first_line: number, last_line: number, first_column: number, last_column: number;
+        try {
+          ({ first_line, last_line, first_column, last_column } = (error.hash as ErrorHash).loc);
+        } catch {
+          const lineNo = findMostRelevantLineNumber(errorString, state.code);
+          first_line = lineNo;
+          last_line = lineNo + 1;
+          first_column = 0;
+          last_column = 0;
+        }
+
+        if (realLineNumber !== -1) {
+          errorString = replaceLineNumberInErrorMessage(errorString, realLineNumber);
+        }
+
+        processed.error = new Error(errorString);
         const marker: MarkerData = {
+          endColumn: last_column + (first_column === last_column ? 0 : 5),
+          endLineNumber: last_line + (realLineNumber - first_line),
+          message: errorString || 'Syntax error',
           severity: 8, // Error
-          startLineNumber: first_line,
           startColumn: first_column,
-          endLineNumber: last_line,
-          endColumn: last_column + 1,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-          message: e.str
+          startLineNumber: realLineNumber
         };
         processed.errorMarkers = [marker];
-      } catch (err) {
-        console.error('Error without line helper', err);
+      } catch (error) {
+        console.error('Error without line helper', error);
       }
     }
   }
@@ -102,11 +129,45 @@ export const stateStore: Readable<ValidatedState> = derived(
   currentState
 );
 
+export const urlsStore = derived([stateStore], ([{ code, serialized }]) => {
+  const { krokiRendererUrl, rendererUrl } = env;
+  const png = rendererUrl ? `${rendererUrl}/img/${serialized}?type=png` : '';
+  return {
+    kroki: krokiRendererUrl ? `${krokiRendererUrl}/mermaid/svg/${pakoSerde.serialize(code)}` : '',
+    mdCode: png
+      ? `[![](${png})](${window.location.protocol}//${window.location.host}${window.location.pathname}#${serialized})`
+      : '',
+    mermaidChart: ({
+      medium
+    }: {
+      medium: 'ai_repair' | 'main_menu' | 'save_diagram' | 'share';
+    }) => {
+      const params = new URLSearchParams({
+        utm_source: C.utmSource,
+        utm_medium: medium
+      }).toString();
+      return {
+        save: `${MCBaseURL}/app/plugin/save?state=${serialized}&${params}`,
+        playground: `${MCBaseURL}/play?${params}#${serialized}`,
+        plugins: `${MCBaseURL}/plugins?${params}`,
+        home: `${MCBaseURL}/?${params}`
+      };
+    },
+    new: `${window.location.protocol}//${window.location.host}${window.location.pathname}#${serializeState(defaultState)}`,
+    png,
+    svg: rendererUrl ? `${rendererUrl}/svg/${serialized}` : '',
+    view: `/view#${serialized}`
+  };
+});
+
 export const loadState = (data: string): void => {
   let state: State;
   console.log(`Loading '${data}'`);
   try {
     state = deserializeState(data);
+    if (!state.mermaid) {
+      state.mermaid = defaultState.mermaid;
+    }
     const mermaidConfig: MermaidConfig =
       typeof state.mermaid === 'string'
         ? (JSON.parse(state.mermaid) as MermaidConfig)
@@ -120,11 +181,11 @@ export const loadState = (data: string): void => {
     ) {
       delete mermaidConfig.securityLevel; // Prevent setting overriding securityLevel when loading state to mitigate possible XSS attack
     }
-    state.mermaid = JSON.stringify(mermaidConfig, null, 2);
-  } catch (e) {
+    state.mermaid = formatJSON(mermaidConfig);
+  } catch (error) {
     state = get(inputStateStore);
     if (data) {
-      console.error('Init error', e);
+      console.error('Init error', error);
       state.code = urlParseFailedState;
       state.mermaid = defaultState.mermaid;
     }
@@ -132,13 +193,14 @@ export const loadState = (data: string): void => {
   updateCodeStore(state);
 };
 
+let renderCount = 0;
 export const updateCodeStore = (newState: Partial<State>): void => {
   inputStateStore.update((state) => {
-    return { ...state, ...newState };
+    renderCount++;
+    return { ...state, ...newState, renderCount };
   });
 };
 
-let prompted = false;
 export const updateCode = (
   code: string,
   {
@@ -146,21 +208,7 @@ export const updateCode = (
     resetPanZoom = false
   }: { updateDiagram?: boolean; resetPanZoom?: boolean } = {}
 ): void => {
-  console.log('updateCode', code);
-  const lines = countLines(code);
-  saveStatistics(code);
   errorDebug();
-  if (lines > 50 && !prompted && get(stateStore).autoSync) {
-    const turnOff = confirm(
-      `Long diagram detected. Turn off Auto Sync? Use ${cmdKey} + Enter or click the sync logo to manually sync.`
-    );
-    prompted = true;
-    if (turnOff) {
-      updateCodeStore({
-        autoSync: false
-      });
-    }
-  }
 
   inputStateStore.update((state) => {
     if (resetPanZoom) {
@@ -172,10 +220,7 @@ export const updateCode = (
 };
 
 export const updateConfig = (config: string): void => {
-  console.log('updateConfig', config);
-  inputStateStore.update((state) => {
-    return { ...state, mermaid: config };
-  });
+  updateCodeStore({ mermaid: config });
 };
 
 export const toggleDarkTheme = (dark: boolean): void => {
@@ -184,21 +229,28 @@ export const toggleDarkTheme = (dark: boolean): void => {
     if (!config.theme || ['dark', 'default'].includes(config.theme)) {
       config.theme = dark ? 'dark' : 'default';
     }
-
-    return { ...state, mermaid: JSON.stringify(config, null, 2) };
+    return { ...state, mermaid: formatJSON(config) };
   });
 };
 
-let urlDebounce: number;
 export const initURLSubscription = (): void => {
+  const updateHash = debounce((hash) => {
+    history.replaceState(undefined, '', `#${hash}`);
+  }, 250);
+
   stateStore.subscribe(({ serialized }) => {
-    clearTimeout(urlDebounce);
-    urlDebounce = window.setTimeout(() => {
-      history.replaceState(undefined, '', `#${serialized}`);
-    }, 250);
+    updateHash(serialized);
   });
 };
 
 export const getStateString = (): string => {
   return JSON.stringify(get(inputStateStore));
+};
+
+export const verifyState = (): void => {
+  const state = get(inputStateStore);
+  if (!state.panZoom) {
+    state.panZoom = true;
+  }
+  updateCodeStore(state);
 };

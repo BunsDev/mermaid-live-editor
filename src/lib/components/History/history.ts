@@ -1,10 +1,10 @@
-import { derived, writable, get } from 'svelte/store';
-import type { Readable, Writable } from 'svelte/store';
-import { persist, localStorage } from '$lib/util/persist';
-import { generateSlug } from 'random-word-slugs';
 import type { HistoryEntry, HistoryType, Optional } from '$lib/types';
-import { v4 as uuidV4 } from 'uuid';
+import { localStorage, persist } from '$lib/util/persist';
 import { logEvent } from '$lib/util/stats';
+import { generateSlug } from 'random-word-slugs';
+import type { Readable, Writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
+import { v4 as uuidV4 } from 'uuid';
 
 const MAX_AUTO_HISTORY_LENGTH = 30;
 
@@ -26,19 +26,27 @@ const manualHistoryStore: Writable<HistoryEntry[]> = persist(
   'manualHistoryStore'
 );
 
-export const loaderHistoryStore: Writable<HistoryEntry[]> = writable([] as HistoryEntry[]);
+export const loaderHistoryStore: Writable<HistoryEntry[]> = writable([]);
 
 export const historyStore: Readable<HistoryEntry[]> = derived(
   [historyModeStore, autoHistoryStore, manualHistoryStore, loaderHistoryStore],
   ([historyMode, autoHistories, manualHistories, loadedHistories], set) => {
-    if (historyMode === 'auto') {
-      set(autoHistories);
-    } else if (historyMode === 'manual') {
-      set(manualHistories);
-    } else if (historyMode === 'loader') {
-      set(loadedHistories);
-    } else {
-      set(autoHistories);
+    switch (historyMode) {
+      case 'auto': {
+        set(autoHistories);
+        break;
+      }
+      case 'manual': {
+        set(manualHistories);
+        break;
+      }
+      case 'loader': {
+        set(loadedHistories);
+        break;
+      }
+      default: {
+        set(autoHistories);
+      }
     }
   }
 );
@@ -65,10 +73,10 @@ export const addHistoryEntry = (entryToAdd: Optional<HistoryEntry, 'id'>): void 
       }
       return [entry, ...entries];
     });
-  } else if (entry.type === 'manual') {
-    manualHistoryStore.update((entries) => [entry, ...entries]);
-    logEvent('history', { action: 'save' });
   }
+
+  manualHistoryStore.update((entries) => [entry, ...entries]);
+  logEvent('history', { action: 'save' });
 };
 
 export const clearHistoryData = (idToClear?: string): void => {
@@ -90,7 +98,7 @@ export const getPreviousState = (auto: boolean): string => {
 };
 
 export const restoreHistory = (data: HistoryEntry[]) => {
-  const entries = data.filter(validateEntry);
+  const entries = data.filter((element) => validateEntry(element));
   const invalidEntryCount = data.length - entries.length;
   if (invalidEntryCount > 0) {
     console.error(`${invalidEntryCount} invalid history entries were removed.`);
@@ -122,20 +130,22 @@ export const restoreHistory = (data: HistoryEntry[]) => {
     alert('No valid entries found.');
   }
 };
+const setIDs = (entries: HistoryEntry[]) => {
+  for (const entry of entries) {
+    if (!entry.id) {
+      entry.id = uuidV4();
+    }
+  }
+  return entries;
+};
 
 export const injectHistoryIDs = (): void => {
-  const setIDs = (entries: HistoryEntry[]) => {
-    for (const entry of entries) {
-      if (!entry.id) {
-        entry.id = uuidV4();
-      }
-    }
-    return entries;
-  };
   autoHistoryStore.update(setIDs);
   manualHistoryStore.update(setIDs);
 };
 
 const validateEntry = (entry: HistoryEntry): boolean => {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
   return entry.type && entry.state && entry.time && true;
 };

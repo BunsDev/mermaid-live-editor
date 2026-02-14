@@ -1,165 +1,171 @@
 <script lang="ts">
-  import { inputStateStore, stateStore, updateCodeStore } from '$lib/util/state';
-  import { onMount } from 'svelte';
-  import panzoom from 'svg-pan-zoom';
-  import type { State, ValidatedState } from '$lib/types';
-  import { logEvent } from '$lib/util/stats';
-  import { cmdKey } from '$lib/util/util';
-  import { render as renderDiagram } from '$lib/util/mermaid';
+  import type { State, ValidatedState } from '$/types';
+  import { recordRenderTime, shouldRefreshView } from '$/util/autoSync';
+  import { render as renderDiagram } from '$/util/mermaid';
+  import { PanZoomState } from '$/util/panZoom';
+  import { inputStateStore, stateStore, updateCodeStore } from '$/util/state';
+  import { logEvent, saveStatistics } from '$/util/stats';
+  import FontAwesome, { mayContainFontAwesome } from '$lib/components/FontAwesome.svelte';
+  import uniqueID from 'lodash-es/uniqueId';
   import type { MermaidConfig } from 'mermaid';
+  import { mode } from 'mode-watcher';
+  import { onMount } from 'svelte';
+  import { Svg2Roughjs } from 'svg2roughjs';
 
+  let {
+    panZoomState = new PanZoomState(),
+    shouldShowGrid = true
+  }: { panZoomState?: PanZoomState; shouldShowGrid?: boolean } = $props();
   let code = '';
   let config = '';
-  let container: HTMLDivElement;
-  let view: HTMLDivElement;
-  let error = false;
-  let outOfSync = false;
-  let hide = false;
+  let container: HTMLDivElement | undefined = $state();
+  let rough: boolean;
+  let view: HTMLDivElement | undefined = $state();
+  let error = $state(false);
+  let panZoom = true;
   let manualUpdate = true;
-  let panZoomEnabled = $stateStore.panZoom;
-  let pzoom: typeof panzoom | undefined;
+  let waitForFontAwesomeToLoad: FontAwesome['waitForFontAwesomeToLoad'] | undefined = $state();
 
-  const handlePanZoomChange = () => {
-    if (!pzoom) {
-      return;
-    }
-    const pan = pzoom.getPan();
-    const zoom = pzoom.getZoom();
-    updateCodeStore({ pan, zoom });
-    logEvent('panZoom');
+  // Set up panZoom state observer to update the store when pan/zoom changes
+  const setupPanZoomObserver = () => {
+    panZoomState.onPanZoomChange = (pan, zoom) => {
+      updateCodeStore({ pan, zoom });
+      logEvent('panZoom');
+    };
   };
 
-  const handlePanZoom = (state: State) => {
-    if (!state.panZoom) {
-      return;
+  const handlePanZoom = (state: State, graphDiv: SVGSVGElement) => {
+    try {
+      panZoomState.updateElement(graphDiv, state);
+    } catch (error) {
+      console.error('PanZoom error:', error);
     }
-    hide = true;
-    pzoom?.destroy();
-    pzoom = undefined;
-    void Promise.resolve().then(() => {
-      const graphDiv = document.getElementById('graph-div');
-      if (!graphDiv) {
-        return;
-      }
-      pzoom = panzoom(graphDiv, {
-        onPan: handlePanZoomChange,
-        onZoom: handlePanZoomChange,
-        controlIconsEnabled: true,
-        fit: true,
-        center: true
-      });
-      const { pan, zoom } = state;
-      if (pan !== undefined && zoom !== undefined && Number.isFinite(zoom)) {
-        pzoom.zoom(zoom);
-        pzoom.pan(pan);
-      }
-      hide = false;
-    });
   };
 
   const handleStateChange = async (state: ValidatedState) => {
+    const startTime = Date.now();
     if (state.error !== undefined) {
       error = true;
       return;
     }
     error = false;
+    let diagramType: string | undefined;
     try {
-      if (container && state && (state.updateDiagram || state.autoSync)) {
-        if (!state.autoSync) {
-          $inputStateStore.updateDiagram = false;
-        }
-        outOfSync = false;
+      if (container) {
         manualUpdate = true;
         // Do not render if there is no change in Code/Config/PanZoom
-        if (code === state.code && config === state.mermaid && panZoomEnabled === state.panZoom) {
+        if (
+          code === state.code &&
+          config === state.mermaid &&
+          rough === state.rough &&
+          panZoom === state.panZoom
+        ) {
           return;
         }
+
+        if (!shouldRefreshView()) {
+          return;
+        }
+
         code = state.code;
         config = state.mermaid;
-        panZoomEnabled = state.panZoom;
-        const scroll = view.parentElement!.scrollTop;
+        rough = state.rough;
+        panZoom = state.panZoom ?? true;
+
+        if (mayContainFontAwesome(code)) {
+          await waitForFontAwesomeToLoad?.();
+        }
+
+        const scroll = view?.parentElement?.scrollTop;
         delete container.dataset.processed;
-        await renderDiagram(
-          Object.assign({}, JSON.parse(state.mermaid)) as MermaidConfig,
-          code,
-          'graph-div',
-          (svgCode, bindFunctions) => {
-            if (svgCode.length > 0) {
-              handlePanZoom(state);
-              container.innerHTML = svgCode;
-              // console.log(container.innerHTML);
-              const graphDiv = document.getElementById('graph-div');
-              if (!graphDiv) {
-                throw new Error('graph-div not found');
-              }
-              graphDiv.setAttribute('height', '100%');
-              graphDiv.style.maxWidth = '100%';
-              if (bindFunctions) {
-                bindFunctions(graphDiv);
-              }
+        const viewID = uniqueID('graph-');
+        const {
+          svg,
+          bindFunctions,
+          diagramType: detectedDiagramType
+        } = await renderDiagram(JSON.parse(state.mermaid) as MermaidConfig, code, viewID);
+        diagramType = detectedDiagramType;
+        if (svg.length > 0) {
+          // eslint-disable-next-line svelte/no-dom-manipulating
+          container.innerHTML = svg;
+          let graphDiv = document.querySelector<SVGSVGElement>(`#${viewID}`);
+          if (!graphDiv) {
+            throw new Error('graph-div not found');
+          }
+          if (state.rough) {
+            const svg2roughjs = new Svg2Roughjs('#container');
+            svg2roughjs.svg = graphDiv;
+            await svg2roughjs.sketch();
+            graphDiv.remove();
+            const sketch = document.querySelector<SVGSVGElement>('#container > svg');
+            if (!sketch) {
+              throw new Error('sketch not found');
+            }
+            const height = sketch.getAttribute('height');
+            const width = sketch.getAttribute('width');
+            sketch.setAttribute('id', 'graph-div');
+            sketch.setAttribute('height', '100%');
+            sketch.setAttribute('width', '100%');
+            sketch.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            sketch.style.maxWidth = '100%';
+            graphDiv = sketch;
+          } else {
+            graphDiv.setAttribute('height', '100%');
+            graphDiv.style.maxWidth = '100%';
+            if (bindFunctions) {
+              bindFunctions(graphDiv);
             }
           }
-        );
-        view.parentElement!.scrollTop = scroll;
+          if (state.panZoom) {
+            handlePanZoom(state, graphDiv);
+          }
+        }
+        if (view?.parentElement && scroll) {
+          view.parentElement.scrollTop = scroll;
+        }
         error = false;
       } else if (manualUpdate) {
         manualUpdate = false;
-      } else if (code !== state.code || config !== state.mermaid) {
-        outOfSync = true;
       }
-    } catch (e) {
-      console.error('view fail', e);
+    } catch (error_) {
+      console.error('view fail', error_);
       error = true;
     }
+    const renderTime = Date.now() - startTime;
+    saveStatistics({ code, diagramType, isRough: state.rough, renderTime });
+    recordRenderTime(renderTime, () => {
+      $inputStateStore.updateDiagram = true;
+    });
   };
 
   onMount(() => {
+    setupPanZoomObserver();
+    // Queue state changes to avoid race condition
+    let pendingStateChange = Promise.resolve();
     stateStore.subscribe((state) => {
-      void handleStateChange(state);
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      pendingStateChange = pendingStateChange.then(() => handleStateChange(state).catch(() => {}));
     });
-    window.addEventListener('resize', () => {
-      if ($stateStore.panZoom && pzoom) {
-        pzoom.resize();
-      }
-    });
-    console.log('View mounted');
   });
 </script>
 
-{#if (error && $stateStore.error instanceof Error) || outOfSync}
-  <div
-    class="absolute w-full p-2 z-10 {error
-      ? 'text-red-600'
-      : 'text-yellow-600'} bg-base-100 bg-opacity-80 text-center"
-    id="errorContainer">
-    {#if error}
-      {$stateStore.error}
-    {:else}
-      Diagram out of sync. <br />
-      Press <i class="fas fa-sync" /> (Sync button) or <kbd>{cmdKey} + Enter</kbd> to sync.
-    {/if}
-  </div>
-{/if}
+<FontAwesome bind:waitForFontAwesomeToLoad />
 
-<div id="view" bind:this={view} class="p-2 h-full" class:error class:outOfSync>
-  <div id="container" bind:this={container} class="h-full overflow-auto" class:hide />
+<div
+  id="view"
+  bind:this={view}
+  class={['h-full w-full', shouldShowGrid && `grid-bg-${$mode}`, error && 'opacity-50']}>
+  <div id="container" bind:this={container} class="h-full overflow-auto"></div>
 </div>
 
 <style>
-  #view {
-    flex: 1;
+  .grid-bg-light {
+    background-size: 30px 30px;
+    background-image: radial-gradient(circle, #e4e4e48c 2px, #0000 2px);
   }
 
-  #container {
-    transition: visibility 0.3s;
-  }
-
-  .error,
-  .outOfSync {
-    opacity: 0.5;
-  }
-
-  .hide {
-    visibility: hidden;
+  .grid-bg-dark {
+    background-size: 30px 30px;
+    background-image: radial-gradient(circle, #46464646 2px, #0000 2px);
   }
 </style>

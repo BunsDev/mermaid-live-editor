@@ -70,13 +70,13 @@ const deserialize = (value?: string | null): unknown => {
   if (value !== null && value !== undefined) {
     try {
       return ESSerializer.deserialize(value);
-    } catch (e) {
+    } catch {
       // Do nothing
       // use the value "as is"
     }
     try {
       return JSON.parse(value);
-    } catch (e) {
+    } catch {
       // Do nothing
       // use the value "as is"
     }
@@ -179,21 +179,17 @@ function getBrowserStorage(
   const listenerFunction = (event: StorageEvent) => {
     const eventKey = event.key;
     if (event.storageArea === browserStorage) {
-      listeners
-        .filter(({ key }) => key === eventKey)
-        .forEach(({ listener }) => {
-          listener(deserialize(event.newValue));
-        });
+      for (const { listener } of listeners.filter(({ key }) => key === eventKey)) {
+        listener(deserialize(event.newValue));
+      }
     }
   };
   const connect = () => {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (listenExternalChanges && typeof window !== 'undefined' && window.addEventListener) {
       window.addEventListener('storage', listenerFunction);
     }
   };
   const disconnect = () => {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (listenExternalChanges && typeof window !== 'undefined' && window.removeEventListener) {
       window.removeEventListener('storage', listenerFunction);
     }
@@ -206,6 +202,13 @@ function getBrowserStorage(
         connect();
       }
     },
+    deleteValue(key: string) {
+      browserStorage.removeItem(key);
+    },
+    getValue(key: string): any {
+      const value = browserStorage.getItem(key);
+      return deserialize(value);
+    },
     removeListener(key: string, listener: (newValue: any) => void) {
       const index = listeners.indexOf({ key, listener });
       if (index !== -1) {
@@ -214,13 +217,6 @@ function getBrowserStorage(
       if (listeners.length === 0) {
         disconnect();
       }
-    },
-    getValue(key: string): any | null {
-      const value = browserStorage.getItem(key);
-      return deserialize(value);
-    },
-    deleteValue(key: string) {
-      browserStorage.removeItem(key);
     },
     setValue(key: string, value: any) {
       browserStorage.setItem(key, serialize(value));
@@ -233,7 +229,6 @@ function getBrowserStorage(
  * @param listenExternalChanges - Update the store if the localStorage is updated from another page
  */
 export function localStorage<T>(listenExternalChanges = false): StorageInterface<T> {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (typeof window !== 'undefined' && window.localStorage) {
     return getBrowserStorage(window.localStorage, listenExternalChanges);
   }

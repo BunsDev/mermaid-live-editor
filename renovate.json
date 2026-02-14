@@ -12,6 +12,10 @@
   ],
   "packageRules": [
     {
+      "matchPackagePatterns": ["^mermaid"],
+      "groupName": "Mermaid packages"
+    },
+    {
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
     }
@@ -20,5 +24,6 @@
   "major": {
     "dependencyDashboardApproval": true
   },
-  "dependencyDashboardAutoclose": true
+  "dependencyDashboardAutoclose": true,
+  "rangeStrategy": "bump"
 }

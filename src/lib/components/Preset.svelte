@@ -1,145 +1,73 @@
 <script lang="ts">
+  import Card from '$/components/Card/Card.svelte';
+  import { Button } from '$/components/ui/button';
+  import { getSampleDiagrams } from '$/util/mermaid';
   import { updateCode } from '$lib/util/state';
-  import Card from '$lib/components/Card/Card.svelte';
   import { logEvent } from '$lib/util/stats';
+  import ShapesIcon from '~icons/material-symbols/account-tree-outline-rounded';
 
-  const samples = {
-    Flow: `graph TD
-    A[Christmas] -->|Get money| B(Go shopping)
-    B --> C{Let me think}
-    C -->|One| D[Laptop]
-    C -->|Two| E[iPhone]
-    C -->|Three| F[fa:fa-car Car]`,
-    Sequence: `sequenceDiagram
-    Alice->>+John: Hello John, how are you?
-    Alice->>+John: John, can you hear me?
-    John-->>-Alice: Hi Alice, I can hear you!
-    John-->>-Alice: I feel great!`,
-    Class: `classDiagram
-    Animal <|-- Duck
-    Animal <|-- Fish
-    Animal <|-- Zebra
-    Animal : +int age
-    Animal : +String gender
-    Animal: +isMammal()
-    Animal: +mate()
-    class Duck{
-      +String beakColor
-      +swim()
-      +quack()
+  const extras = {
+    ZenUML: `zenuml
+    title Order Service
+    @Actor Client #FFEBE6
+    @Boundary OrderController #0747A6
+    @EC2 <<BFF>> OrderService #E3FCEF
+    group BusinessService {
+      @Lambda PurchaseService
+      @AzureFunction InvoiceService
     }
-    class Fish{
-      -int sizeInFeet
-      -canEat()
+
+    @Starter(Client)
+    // \`POST /orders\`
+    OrderController.post(payload) {
+      OrderService.create(payload) {
+        order = new Order(payload)
+        if(order != null) {
+          par {
+            PurchaseService.createPO(order)
+            InvoiceService.createInvoice(order)      
+          }      
+        }
+      }
     }
-    class Zebra{
-      +bool is_wild
-      +run()
-    }`,
-    State: `stateDiagram-v2
-    [*] --> Still
-    Still --> [*]
-    Still --> Moving
-    Moving --> Still
-    Moving --> Crash
-    Crash --> [*]`,
-    Gantt: `gantt
-    title A Gantt Diagram
-    dateFormat  YYYY-MM-DD
-    section Section
-    A task           :a1, 2014-01-01, 30d
-    Another task     :after a1  , 20d
-    section Another
-    Task in sec      :2014-01-12  , 12d
-    another task      : 24d`,
-    Pie: `pie title Pets adopted by volunteers
-    "Dogs" : 386
-    "Cats" : 85
-    "Rats" : 15`,
-    ER: `erDiagram
-    CUSTOMER }|..|{ DELIVERY-ADDRESS : has
-    CUSTOMER ||--o{ ORDER : places
-    CUSTOMER ||--o{ INVOICE : "liable for"
-    DELIVERY-ADDRESS ||--o{ ORDER : receives
-    INVOICE ||--|{ ORDER : covers
-    ORDER ||--|{ ORDER-ITEM : includes
-    PRODUCT-CATEGORY ||--|{ PRODUCT : contains
-    PRODUCT ||--o{ ORDER-ITEM : "ordered in"`,
-    'User Journey': `journey
-    title My working day
-    section Go to work
-      Make tea: 5: Me
-      Go upstairs: 3: Me
-      Do work: 1: Me, Cat
-    section Go home
-      Go downstairs: 5: Me
-      Sit down: 3: Me`,
-    Git: `gitGraph
-    commit
-    commit
-    branch develop
-    checkout develop
-    commit
-    commit
-    checkout main
-    merge develop
-    commit
-    commit`,
-    Mindmap: `mindmap
-  root((mindmap))
-    Origins
-      Long history
-      ::icon(fa fa-book)
-      Popularisation
-        British popular psychology author Tony Buzan
-    Research
-      On effectivness<br/>and features
-      On Automatic creation
-        Uses
-            Creative techniques
-            Strategic planning
-            Argument mapping
-    Tools
-      Pen and paper
-      Mermaid`
+    `
   };
 
-  type SampleTypes = keyof typeof samples;
-  const loadSampleDiagram = (diagramType: SampleTypes): void => {
+  const samples = { ...getSampleDiagrams(), ...extras } as const;
+  const loadSampleDiagram = (diagramType: string): void => {
     updateCode(samples[diagramType], {
-      updateDiagram: true,
-      resetPanZoom: true
+      resetPanZoom: true,
+      updateDiagram: true
     });
     logEvent('loadSampleDiagram', { diagramType });
   };
 
-  // Adding in this array will add an icon to the preset menu
-  const newDiagrams: SampleTypes[] = ['Mindmap'];
-  const diagramOrder: SampleTypes[] = [
-    'Sequence',
-    'Flow',
+  const mainDiagrams = [
+    'Flowchart',
     'Class',
+    'Sequence',
+    'Entity Relationship',
     'State',
-    'ER',
-    'Gantt',
-    'User Journey',
-    'Git',
-    'Pie',
     'Mindmap'
+  ];
+
+  const diagramOrder = [
+    ...mainDiagrams,
+    ...Object.keys(samples)
+      .filter((key) => !mainDiagrams.includes(key))
+      .sort()
   ];
 </script>
 
-<Card title="Sample Diagrams" isOpen={false}>
-  <div class="flex flex-wrap p-2 gap-2">
-    {#each diagramOrder as sample}
-      <button
-        class="btn btn-sm btn-primary w-28 normal-case flex-grow"
-        on:click={() => loadSampleDiagram(sample)}>
+<Card title="Sample Diagrams" isOpen isStackable icon={{ component: ShapesIcon }}>
+  <div class="flex h-fit max-h-52 flex-wrap gap-2 overflow-y-auto p-2">
+    {#each diagramOrder as sample (sample)}
+      <Button
+        size="sm"
+        class="w-fit min-w-20 flex-grow normal-case"
+        onclick={() => loadSampleDiagram(sample)}>
         {sample}
-        {#if newDiagrams.includes(sample)}
-          <span class="ml-2 fa fa-heart" />
-        {/if}
-      </button>
+      </Button>
     {/each}
   </div>
 </Card>

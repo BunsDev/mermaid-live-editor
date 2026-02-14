@@ -1,52 +1,52 @@
 <script lang="ts">
-  import type { Tab, TabEvents } from '$lib/types';
-  import { createEventDispatcher } from 'svelte';
+  import { Button } from '$/components/ui/button';
+  import { Separator } from '$/components/ui/separator';
+  import type { Tab } from '$lib/types';
   import { fade } from 'svelte/transition';
-  export let isCloseable = true;
-  export let tabs: Tab[];
-  export let title: string;
-  export let isOpen = false;
-  export let activeTabID: string;
+
+  let {
+    tabs,
+    activeTabID,
+    onselect
+  }: {
+    tabs: Tab[];
+    activeTabID: string;
+    onselect?: (tab: Tab) => void;
+  } = $props();
 
   if (!activeTabID && tabs.length > 0) {
     activeTabID = tabs[0].id;
   }
-  const dispatch = createEventDispatcher<TabEvents>();
+
   const toggleTabs = (tab: Tab) => {
-    activeTabID = tab.id;
-    dispatch('select', tab);
+    return (event: Event) => {
+      event.stopPropagation();
+      onselect?.(tab);
+    };
   };
 </script>
 
-<div class="flex cursor-default">
-  <span
-    class="mr-2 font-semibold"
-    on:click|stopPropagation={() => (isOpen = !isOpen)}
-    on:keypress|stopPropagation={() => (isOpen = !isOpen)}>
-    {#if isCloseable}
-      <i class="fas fa-chevron-right icon" class:isOpen />
-    {/if}
-    {title}</span>
-  {#if isOpen && tabs}
-    <ul class="tabs" transition:fade>
-      {#each tabs as tab}
-        <div
-          class="tab tab-lifted {activeTabID === tab.id ? 'tab-active' : 'text-primary-content'}"
-          on:click|stopPropagation={() => toggleTabs(tab)}
-          on:keypress|stopPropagation={() => toggleTabs(tab)}>
-          <i class="mr-1 {tab.icon}" />
-          {tab.title}
-        </div>
-      {/each}
-    </ul>
-  {/if}
-</div>
+<div class="flex w-fit cursor-default items-center gap-2">
+  <ul class="flex gap-2 align-middle" transition:fade>
+    {#each tabs as tab, index (tab.id)}
+      <Button
+        role="tab"
+        variant="ghost"
+        class={[
+          'px-2',
+          activeTabID === tab.id && 'rounded-b-none border-b-2 border-b-primary-foreground/50'
+        ]}
+        onclick={toggleTabs(tab)}
+        onkeypress={toggleTabs(tab)}>
+        <tab.icon />
+        {tab.title}
+      </Button>
 
-<style>
-  .icon {
-    transition-duration: 0.5s;
-  }
-  .isOpen {
-    transform: rotate(90deg);
-  }
-</style>
+      {#if index < tabs.length - 1}
+        <div class="my-2">
+          <Separator orientation="vertical" class="w-0.5 bg-slate-300" />
+        </div>
+      {/if}
+    {/each}
+  </ul>
+</div>

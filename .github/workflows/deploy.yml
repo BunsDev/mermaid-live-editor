@@ -14,25 +14,49 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - uses: actions/setup-node@v3
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '16'
-          cache: yarn
+          node-version-file: '.node-version'
+          cache: pnpm
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          static_site_generator: sveltekit
 
       - name: Build & Deploy
+        env:
+          MERMAID_DOMAIN: 'mermaid.live'
+          MERMAID_ANALYTICS_URL: 'https://p.mermaid.live'
+          MERMAID_RENDERER_URL: 'https://mermaid.ink'
+          MERMAID_KROKI_RENDERER_URL: 'https://kroki.io'
+          MERMAID_IS_ENABLED_MERMAID_CHART_LINKS: 'true'
         run: |
           export DEPLOY=true
           [ "$GITHUB_EVENT_NAME" != "pull_request" ] && rm -rf docs/_app/
-          yarn install
-          version=$(yarn version --patch --no-git-tag-version | grep "New version" | cut -d':' -f 2)
-          yarn build
-          yarn run lint
-          cd ..
+          pnpm install
+          pnpm build
 
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v3
-        if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs
-          keep_files: true
+          path: ./docs
+
+  deploy:
+    if: ${{ github.ref == 'refs/heads/master' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
+    permissions:
+      pages: write # to deploy to Pages
+      id-token: write # to verify the deployment originates from an appropriate source
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
